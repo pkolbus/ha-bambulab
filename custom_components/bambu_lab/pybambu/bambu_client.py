@@ -551,7 +551,8 @@ class BambuClient:
         if (result_code == 0):
             LOGGER.debug(f"On Disconnect: Printer disconnected with error code: {result_code}")
         else:
-            LOGGER.warning(f"On Disconnect: Printer disconnected with error code: {result_code}")
+            error_string = mqtt.error_string(result_code)
+            LOGGER.warning(f"On Disconnect: Printer disconnected with error: {result_code} - {error_string}")
         self._on_disconnect()
 
     def _on_disconnect(self):
