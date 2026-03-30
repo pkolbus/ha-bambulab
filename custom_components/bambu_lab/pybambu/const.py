@@ -65,6 +65,7 @@ class Features(IntEnum):
     SECONDARY_AUX_FAN = 25,
     HOTEND_RACK = 26,
     ACTIVE_CHAMBER_HEATER = 27,
+    AMS_DRYING_SETTINGS = 28,
 
 
 class FansEnum(IntEnum):
