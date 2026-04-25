@@ -77,45 +77,91 @@ def get_error_text(language: str, printer_type: str, serial_prefix: str) -> None
     return error_data
 
 class HmsWikiParser(HTMLParser):
+    """
+    HTMLParser for https://wiki.bambulab.com/en/hms/home
 
-    table = str.maketrans("", "", "-_")
+    Data is on this page in a sequence of blockquote elements, as follows. The
+    p, ul, and li tags are ignored, and the structure of important tags is
+    tracked with a list.
+
+    ..code-block
+        <blockquote>
+            <p><strong>HMS_{code}: {text}</strong></p>
+            <p><strong>Synonyms:</strong>
+            <small>{code}[, {code} ...]</small></p>
+            <ul><li>
+            <a href="/en/x1/troubleshooting/hmscode/0300_0100_0001_0003">
+            {model}[/ {model}...]</a>
+            </li></ul>
+        </blockquote>
+    """
+
+    hms_code_re = re.compile("[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}")
     url_re = re.compile("/en/.*/troubleshooting/hmscode/.*")
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._wiki_urls = defaultdict(dict)
-        self._current_url = None
+        self._current_url = ""
+        self._parsing_synonyms = False
+        self._tags = list()
 
     def get_wiki_urls(self) -> dict:
         return self._wiki_urls
 
     def handle_starttag(self, tag, attrs):
-        if tag != "a":
-            return
+        match tag:
+            case "blockquote":
+                self._tags.append(tag)
+                self._current_url = ""
+                self._parsing_synonyms = False
+                self._hms_codes = []
+            case "strong" | "small":
+                self._tags.append(tag)
+            case "a":
+                self._tags.append(tag)
+                if self._tags != ["blockquote", "a"]:
+                    return
+                attr_dict = dict(attrs)
+                try:
+                    value = attr_dict["href"]
+                except KeyError:
+                    return
 
-        attr_dict = dict(attrs)
-        try:
-            value = attr_dict["href"]
-        except KeyError:
-            return
-
-        if value and HmsWikiParser.url_re.match(value):
-            self._current_url = value
+                if value and HmsWikiParser.url_re.match(value):
+                    self._current_url = value
 
     def handle_endtag(self, tag):
-        self._current_url = None
+        match tag:
+            case "blockquote" | "strong" | "small" | "a":
+                if tag != self._tags[-1]:
+                    logging.error("unexpected end tags=%s tags=%s", self._tags, tag)
+                    exit(1)
+                self._tags.pop()
 
     def handle_data(self, data):
-        if self._current_url:
-            printers = [model.strip() for model in data.split("/")]
-            printers = [_PRINTER_NAME_TO_MODEL.get(model, model) for model in printers]
-            self._add_url(printers)
+        match self._tags:
+            case ["blockquote", "strong"]:
+                if data.strip() == "Synonyms:":
+                    self._parsing_synonyms = True
+                else:
+                    self._parsing_synonyms = False
+            case ["blockquote", "small"]:
+                if self._parsing_synonyms:
+                    self._hms_codes = [
+                        code.replace("-", "")
+                        for code in self.hms_code_re.findall(data)
+                    ]
+            case ["blockquote", "a"]:
+                if self._hms_codes and self._current_url:
+                    printers = [model.strip() for model in data.split("/")]
+                    printers = [_PRINTER_NAME_TO_MODEL.get(model, model) for model in printers]
+                    self._add_url(printers)
 
     def _add_url(self, printers) -> None:
-        path_components = self._current_url.split("/")
-        hms_code = path_components[-1].translate(HmsWikiParser.table)
-        for printer in printers:
-            self._wiki_urls[hms_code][printer] = self._current_url
+        for hms_code in self._hms_codes:
+            for printer in printers:
+                self._wiki_urls[hms_code][printer] = self._current_url
 
 
 def get_wiki_urls(hms_url) -> dict:
